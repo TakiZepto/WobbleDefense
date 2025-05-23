@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wobble Defense</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #f0f0f0;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        #gameContainer {
+            border: 3px solid #666;
+            background: white;
+            position: relative;
+            margin: 20px 0;
+        }
+        
+        #gameCanvas {
+            display: block;
+            cursor: crosshair;
+        }
+        
+        #gameInfo {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            margin: 10px 0;
+            font-size: 16px;
+        }
+        
+        #preview {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: bold;
+        }
+        
+        #nextBall {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            border: 2px solid #333;
+        }
+        
+        .stat {
+            font-weight: bold;
+        }
+        
+        #baseHP {
+            color: #4CAF50;
+        }
+        
+        #wave {
+            color: #FF5722;
+        }
+        
+        .instructions {
+            max-width: 600px;
+            text-align: center;
+            margin: 20px 0;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+    <h1>🎯 Wobble Defense</h1>
+    
+    <div class="instructions">
+        Click to drop and merge balls! Merged balls become turrets that defend your base from enemies!
+    </div>
+    
+    <div id="gameInfo">
+        <div id="preview">Next ball: <div id="nextBall"></div></div>
+        <div class="stat" id="score">Score: 0</div>
+        <div class="stat" id="baseHP">Base HP: 200/200</div>
+        <div class="stat" id="wave">Wave: 1</div>
+    </div>
+    
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="400" height="600"></canvas>
+    </div>
+
+    <script>
+        class Projectile {
+            constructor(x, y, targetX, targetY, damage, color) {
+                this.x = x;
+                this.y = y;
+                this.damage = damage;
+                this.color = color;
+                this.speed = 8;
+                this.radius = 3;
+                this.dead = false;
+                
+                // Calculate direction to target
+                const dx = targetX - x;
+                const dy = targetY - y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                this.vx = (dx / distance) * this.speed;
+                this.vy = (dy / distance) * this.speed;
+            }
+            
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                
+                // Remove if off screen
+                if (this.x < 0 || this.x > canvas.width || this.y < 0 || this.y > canvas.height) {
+                    this.dead = true;
+                }
+                
+                // Check collision with enemies
+                game.enemies.forEach(enemy => {
+                    if (!enemy.dead && !this.dead) {
+                        const dx = this.x - enemy.x;
+                        const dy = this.y - enemy.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        
+                        if (distance < this.radius + 10) { // Enemy collision radius
+                            enemy.takeDamage(this.damage);
+                            this.dead = true;
+                        }
+                    }
+                });
+            }
+            
+            draw(ctx) {
+                if (this.dead) return;
+                
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+        }
+
+        class Ball {
+            constructor(x, y, color, size = 1) {
+                this.x = x;
+                this.y = y;
+                this.vx = 0;
+                this.vy = 0;
+                this.color = color;
+                this.size = size;
+                this.radius = this.getRadius();
+                this.merged = false;
+                this.lastAttack = 0;
+                this.target = null;
+                this.isDefender = false; // Track if ball is in defense position
+            }
+            
+            getRadius() {
+                const baseDiameter = 20;
+                const diameter = baseDiameter * Math.pow(2, this.size - 1);
+                return diameter / 2;
+            }
+            
+            getAttackRate() {
+                const rates = [2500, 1000, 400, 100, 40, 10, 4]; // milliseconds
+                return rates[this.size - 1] || 4;
+            }
+            
+            getDamage() {
+                return this.size; // Damage scales with ball size
+            }
+            
+            getAttackRange() {
+                const baseRange = 100;
+                const rangeMultiplier = 1 + (this.size - 1) * 0.5; // 1, 1.5, 2, 2.5, 3, etc.
+                return baseRange * rangeMultiplier;
+            }
+
+            // Constraint to keep ball above base line
+            constrainToBase() {
+                const baseLineY = 300;
+                if (this.y + this.radius > baseLineY) {
+                    this.y = baseLineY - this.radius;
+                    if (this.vy > 0) {
+                        this.vy *= -0.6; // Bounce
+                    }
+                }
+            }
+            
+            update() {
+                if (this.merged) return;
+                
+                const baseLineY = 300; // Pink line - solid floor
+                
+                if (!this.isDefender) {
+                    // Apply gravity
+                    this.vy += 0.3;
+                    
+                    // Add slight air resistance
+                    this.vx *= 0.99;
+                    this.vy *= 0.995;
+                    
+                    // Update position
+                    this.x += this.vx;
+                    this.y += this.vy;
+                    
+                    // Bounce off walls
+                    if (this.x - this.radius < 0) {
+                        this.x = this.radius;
+                        this.vx *= -0.85;
+                    }
+                    if (this.x + this.radius > canvas.width) {
+                        this.x = canvas.width - this.radius;
+                        this.vx *= -0.85;
+                    }
+                    
+                    // Solid floor collision - balls CANNOT pass through
+                    this.constrainToBase();
+                    
+                    // More generous settling conditions
+                    if (this.y + this.radius >= baseLineY - 5) {
+                        if (Math.abs(this.vy) < 3 && Math.abs(this.vx) < 3) {
+                            this.vy = 0;
+                            this.vx *= 0.8; // More gradual horizontal reduction
+                            if (Math.abs(this.vx) < 0.2) {
+                                this.vx = 0;
+                                this.isDefender = true;
+                            }
+                        }
+                    }
+                } else {
+                    // Defender balls stay put but ensure they're still above base
+                    this.constrainToBase();
+                    this.vx = 0;
+                    this.vy = 0;
+                }
+                
+                this.radius = this.getRadius();
+                
+                // Attack logic for defender balls
+                if (this.isDefender && Date.now() - this.lastAttack > this.getAttackRate()) {
+                    this.attackNearestEnemy();
+                }
+            }
+            
+            attackNearestEnemy() {
+                let nearestEnemy = null;
+                let nearestDistance = Infinity;
+                const attackRange = this.getAttackRange();
+                
+                game.enemies.forEach(enemy => {
+                    if (enemy.dead) return;
+                    
+                    const dx = this.x - enemy.x;
+                    const dy = this.y - enemy.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (distance < nearestDistance && distance < attackRange) {
+                        nearestDistance = distance;
+                        nearestEnemy = enemy;
+                    }
+                });
+                
+                if (nearestEnemy) {
+                    // Create projectile instead of instant damage
+                    const projectile = new Projectile(
+                        this.x, 
+                        this.y, 
+                        nearestEnemy.x, 
+                        nearestEnemy.y, 
+                        this.getDamage(),
+                        this.color
+                    );
+                    game.projectiles.push(projectile);
+                    
+                    this.lastAttack = Date.now();
+                    this.target = nearestEnemy;
+                }
+            }
+            
+            draw(ctx) {
+                if (this.merged) return;
+                
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                // Draw size number
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 16px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.size.toString(), this.x, this.y);
+                
+                // Draw attack range for defender balls
+                if (this.isDefender) {
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.getAttackRange(), 0, Math.PI * 2);
+                    ctx.strokeStyle = this.color + '30';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                }
+            }
+            
+            checkCollision(other) {
+                if (this.merged || other.merged) return false;
+                
+                const dx = this.x - other.x;
+                const dy = this.y - other.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                // Increased tolerance to prevent micro-collisions
+                const tolerance = 1.2;
+                return distance < (this.radius + other.radius - tolerance);
+            }
+            
+            canMerge(other) {
+                return this.color === other.color && 
+                       this.size === other.size && 
+                       this.size < 7 &&
+                       !this.merged && 
+                       !other.merged;
+            }
+        }
+        
+        class Enemy {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.maxHP = 50;
+                this.hp = 50;
+                this.attack = 1;
+                this.speed = 0.5;
+                this.dead = false;
+                this.reachedBase = false;
+            }
+            
+            update() {
+                if (this.dead || this.reachedBase) return;
+                
+                // Move toward base
+                this.y -= this.speed;
+                
+                // Check if reached base
+                if (this.y <= 320) {
+                    this.reachedBase = true;
+                    game.baseHP -= this.attack;
+                    game.updateUI();
+                }
+            }
+            
+            takeDamage(damage) {
+                this.hp -= damage;
+                if (this.hp <= 0) {
+                    this.dead = true;
+                    game.score += 10;
+                    game.updateUI();
+                }
+            }
+            
+            draw(ctx) {
+                if (this.dead) return;
+                
+                // Draw enemy triangle
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y - 10);
+                ctx.lineTo(this.x - 8, this.y + 6);
+                ctx.lineTo(this.x + 8, this.y + 6);
+                ctx.closePath();
+                ctx.fillStyle = '#D32F2F';
+                ctx.fill();
+                ctx.strokeStyle = '#B71C1C';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                // Draw HP bar
+                const barWidth = 16;
+                const barHeight = 3;
+                const hpRatio = this.hp / this.maxHP;
+                
+                ctx.fillStyle = '#FF5252';
+                ctx.fillRect(this.x - barWidth/2, this.y - 18, barWidth, barHeight);
+                ctx.fillStyle = '#4CAF50';
+                ctx.fillRect(this.x - barWidth/2, this.y - 18, barWidth * hpRatio, barHeight);
+            }
+        }
+        
+        class Game {
+            constructor() {
+                this.canvas = document.getElementById('gameCanvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.balls = [];
+                this.enemies = [];
+                this.projectiles = [];
+                this.colors = ['#4A90E2', '#E24A4A', '#F5A623'];
+                this.nextColor = this.getRandomColor();
+                this.score = 0;
+                this.baseHP = 200;
+                this.maxBaseHP = 200;
+                this.wave = 1;
+                this.maxWaves = 5;
+                this.enemiesSpawnedThisWave = 0;
+                this.enemiesNeededThisWave = this.getEnemiesForWave(this.wave);
+                this.dropHeight = 50;
+                this.lastSpawn = 0;
+                this.spawnRate = 2000; // Wave 1: 2 seconds between spawns
+                this.waveComplete = false;
+                this.gameWon = false;
+                
+                this.canvas.addEventListener('click', (e) => this.dropBall(e));
+                this.updatePreview();
+                this.updateUI();
+                this.gameLoop();
+            }
+            
+            getEnemiesForWave(wave) {
+                // Wave N = 5 + 5*N (Wave 1 = 10, Wave 2 = 15, Wave 3 = 20, etc.)
+                return 5 + 5 * wave;
+            }
+            
+            getSpawnRateForWave(wave) {
+                const spawnRates = [2000, 1500, 1100, 700, 300]; // Wave 1-5 in milliseconds
+                return spawnRates[wave - 1] || 300;
+            }
+            
+            startNextWave() {
+                if (this.wave >= this.maxWaves) {
+                    this.gameWon = true;
+                    return;
+                }
+                
+                this.wave++;
+                this.enemiesSpawnedThisWave = 0;
+                this.enemiesNeededThisWave = this.getEnemiesForWave(this.wave);
+                this.waveComplete = false;
+                
+                // Set spawn rate for this specific wave
+                this.spawnRate = this.getSpawnRateForWave(this.wave);
+                
+                this.updateUI();
+            }
+            
+            getRandomColor() {
+                return this.colors[Math.floor(Math.random() * this.colors.length)];
+            }
+            
+            updatePreview() {
+                const preview = document.getElementById('nextBall');
+                preview.style.backgroundColor = this.nextColor;
+            }
+            
+            updateUI() {
+                document.getElementById('score').textContent = `Score: ${this.score}`;
+                document.getElementById('baseHP').textContent = `Base HP: ${this.baseHP}/${this.maxBaseHP}`;
+                document.getElementById('wave').textContent = `Wave: ${this.wave} (${this.enemiesSpawnedThisWave}/${this.enemiesNeededThisWave})`;
+                
+                // Update base HP color
+                const hpElement = document.getElementById('baseHP');
+                const hpRatio = this.baseHP / this.maxBaseHP;
+                if (hpRatio > 0.6) {
+                    hpElement.style.color = '#4CAF50';
+                } else if (hpRatio > 0.3) {
+                    hpElement.style.color = '#FF9800';
+                } else {
+                    hpElement.style.color = '#F44336';
+                }
+            }
+            
+            dropBall(event) {
+                const rect = this.canvas.getBoundingClientRect();
+                const x = event.clientX - rect.left;
+                
+                // Only allow dropping in upper area (above the pink base line)
+                const y = event.clientY - rect.top;
+                if (y > 300) return;
+                
+                const ball = new Ball(x, this.dropHeight, this.nextColor, 1);
+                ball.vx = (Math.random() - 0.5) * 0.1; // Very tiny random variation (-0.05 to +0.05)
+                this.balls.push(ball);
+                
+                this.nextColor = this.getRandomColor();
+                this.updatePreview();
+            }
+            
+            spawnEnemy() {
+                // Don't spawn if game is won or wave is complete
+                if (this.gameWon || this.waveComplete) return;
+                
+                // Check if we've spawned enough enemies for this wave
+                if (this.enemiesSpawnedThisWave >= this.enemiesNeededThisWave) {
+                    // Check if all enemies from this wave are dead/reached base
+                    const aliveEnemies = this.enemies.filter(enemy => !enemy.dead && !enemy.reachedBase).length;
+                    if (aliveEnemies === 0) {
+                        this.waveComplete = true;
+                        // Wait 3 seconds before starting next wave
+                        setTimeout(() => {
+                            this.startNextWave();
+                        }, 3000);
+                    }
+                    return;
+                }
+                
+                // Spawn enemy based on spawn rate
+                if (Date.now() - this.lastSpawn > this.spawnRate) {
+                    const x = Math.random() * (this.canvas.width - 40) + 20;
+                    this.enemies.push(new Enemy(x, this.canvas.height - 20));
+                    this.enemiesSpawnedThisWave++;
+                    this.lastSpawn = Date.now();
+                    this.updateUI();
+                }
+            }
+            
+            checkCollisions() {
+                const baseLineY = 300;
+                
+                for (let i = 0; i < this.balls.length; i++) {
+                    for (let j = i + 1; j < this.balls.length; j++) {
+                        const ball1 = this.balls[i];
+                        const ball2 = this.balls[j];
+                        
+                        if (ball1.checkCollision(ball2)) {
+                            if (ball1.canMerge(ball2)) {
+                                this.mergeBalls(ball1, ball2);
+                            } else {
+                                this.resolveBallCollision(ball1, ball2);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            resolveBallCollision(ball1, ball2) {
+                const baseLineY = 300;
+                const dx = ball2.x - ball1.x;
+                const dy = ball2.y - ball1.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance === 0) return;
+                
+                const nx = dx / distance;
+                const ny = dy / distance;
+                
+                // Calculate overlap
+                const overlap = (ball1.radius + ball2.radius) - distance;
+                
+                // If overlap is very small, ignore it completely
+                if (overlap < 1) return;
+                
+                // Calculate speeds
+                const ball1Speed = Math.sqrt(ball1.vx * ball1.vx + ball1.vy * ball1.vy);
+                const ball2Speed = Math.sqrt(ball2.vx * ball2.vx + ball2.vy * ball2.vy);
+                
+                // If both balls are moving very slowly and overlap is small, just dampen
+                if (overlap < 4 && ball1Speed < 1 && ball2Speed < 1) {
+                    ball1.vx *= 0.9;
+                    ball1.vy *= 0.9;
+                    ball2.vx *= 0.9;
+                    ball2.vy *= 0.9;
+                    return;
+                }
+                
+                // Determine which ball is lower (closer to base)
+                const ball1AtBase = (ball1.y + ball1.radius >= baseLineY - 8);
+                const ball2AtBase = (ball2.y + ball2.radius >= baseLineY - 8);
+                
+                if (ball1AtBase && ball2AtBase) {
+                    // Both balls are at the base - very gentle horizontal separation
+                    const separationX = nx * overlap * 0.15; // Much smaller force
+                    ball1.x -= separationX;
+                    ball2.x += separationX;
+                    
+                    // Ensure both stay above base
+                    ball1.constrainToBase();
+                    ball2.constrainToBase();
+                    
+                    // Heavy damping for settled balls
+                    ball1.vx *= 0.5;
+                    ball2.vx *= 0.5;
+                    ball1.vy = Math.min(ball1.vy * 0.3, 0);
+                    ball2.vy = Math.min(ball2.vy * 0.3, 0);
+                    
+                } else if (ball1AtBase) {
+                    // Ball1 is at base, very gentle push for ball2
+                    ball2.x += nx * overlap * 0.4;
+                    ball2.y += ny * overlap * 0.4;
+                    if (ball2.vy > -0.3) ball2.vy = -0.3; // Very gentle upward push
+                    ball1.constrainToBase();
+                    
+                } else if (ball2AtBase) {
+                    // Ball2 is at base, very gentle push for ball1
+                    ball1.x -= nx * overlap * 0.4;
+                    ball1.y -= ny * overlap * 0.4;
+                    if (ball1.vy > -0.3) ball1.vy = -0.3; // Very gentle upward push
+                    ball2.constrainToBase();
+                    
+                } else {
+                    // Neither ball is at base - gentle collision
+                    const separationX = nx * overlap * 0.25;
+                    const separationY = ny * overlap * 0.25;
+                    
+                    ball1.x -= separationX;
+                    ball1.y -= separationY;
+                    ball2.x += separationX;
+                    ball2.y += separationY;
+                    
+                    // Apply very gentle collision physics
+                    const dvx = ball2.vx - ball1.vx;
+                    const dvy = ball2.vy - ball1.vy;
+                    const dvn = dvx * nx + dvy * ny;
+                    
+                    if (dvn > 0) return;
+                    
+                    const restitution = 0.3; // Much less bouncy
+                    const impulse = (1 + restitution) * dvn / 2;
+                    
+                    ball1.vx += impulse * nx * 0.6;
+                    ball1.vy += impulse * ny * 0.6;
+                    ball2.vx -= impulse * nx * 0.6;
+                    ball2.vy -= impulse * ny * 0.6;
+                }
+                
+                // Final constraint check for both balls
+                ball1.constrainToBase();
+                ball2.constrainToBase();
+            }
+            
+            mergeBalls(ball1, ball2) {
+                const newX = (ball1.x + ball2.x) / 2;
+                const newY = Math.min(ball1.y, ball2.y);
+                const newSize = ball1.size + 1;
+                const newBall = new Ball(newX, newY, ball1.color, newSize);
+                
+                newBall.vy = -3;
+                newBall.vx = (ball1.vx + ball2.vx) / 2;
+                
+                this.score += newSize * 10;
+                this.updateUI();
+                
+                ball1.merged = true;
+                ball2.merged = true;
+                this.balls.push(newBall);
+                
+                setTimeout(() => {
+                    this.balls = this.balls.filter(ball => !ball.merged);
+                }, 100);
+            }
+            
+            gameLoop() {
+                // Game over check
+                if (this.baseHP <= 0) {
+                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                    this.ctx.fillStyle = 'white';
+                    this.ctx.font = 'bold 48px Arial';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('GAME OVER', this.canvas.width/2, this.canvas.height/2);
+                    this.ctx.font = 'bold 24px Arial';
+                    this.ctx.fillText(`Final Score: ${this.score}`, this.canvas.width/2, this.canvas.height/2 + 60);
+                    return;
+                }
+                
+                // Victory check
+                if (this.gameWon) {
+                    this.ctx.fillStyle = 'rgba(0, 100, 0, 0.8)';
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                    this.ctx.fillStyle = 'white';
+                    this.ctx.font = 'bold 48px Arial';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('VICTORY!', this.canvas.width/2, this.canvas.height/2);
+                    this.ctx.font = 'bold 24px Arial';
+                    this.ctx.fillText(`All 5 waves defeated!`, this.canvas.width/2, this.canvas.height/2 + 40);
+                    this.ctx.fillText(`Final Score: ${this.score}`, this.canvas.width/2, this.canvas.height/2 + 80);
+                    return;
+                }
+                
+                // Clear canvas
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                // Draw base (green area) first
+                const baseHeight = 20;
+                this.ctx.fillStyle = '#4CAF50';
+                this.ctx.fillRect(0, 300, this.canvas.width, baseHeight);
+                
+                // Draw pink base line (where balls stop) - exactly on top of green base
+                this.ctx.strokeStyle = '#E91E63';
+                this.ctx.lineWidth = 3;
+                this.ctx.beginPath();
+                this.ctx.moveTo(0, 300);
+                this.ctx.lineTo(this.canvas.width, 300);
+                this.ctx.stroke();
+                
+                // Draw base HP bar
+                const hpBarHeight = 8;
+                const hpRatio = this.baseHP / this.maxBaseHP;
+                this.ctx.fillStyle = '#FF5252';
+                this.ctx.fillRect(10, 310, this.canvas.width - 20, hpBarHeight);
+                this.ctx.fillStyle = '#4CAF50';
+                this.ctx.fillRect(10, 310, (this.canvas.width - 20) * hpRatio, hpBarHeight);
+                
+                // Show wave complete message
+                if (this.waveComplete && !this.gameWon) {
+                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                    this.ctx.fillStyle = 'white';
+                    this.ctx.font = 'bold 36px Arial';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText(`Wave ${this.wave} Complete!`, this.canvas.width/2, this.canvas.height/2);
+                    this.ctx.font = 'bold 20px Arial';
+                    this.ctx.fillText('Next wave starting soon...', this.canvas.width/2, this.canvas.height/2 + 50);
+                }
+                
+                // Spawn enemies
+                this.spawnEnemy();
+                
+                // Update and draw balls
+                this.balls.forEach(ball => {
+                    ball.update();
+                    ball.draw(this.ctx);
+                });
+                
+                // Update and draw projectiles
+                this.projectiles.forEach(projectile => {
+                    projectile.update();
+                    projectile.draw(this.ctx);
+                });
+                
+                // Remove dead projectiles
+                this.projectiles = this.projectiles.filter(projectile => !projectile.dead);
+                
+                // Update and draw enemies
+                this.enemies.forEach(enemy => {
+                    enemy.update();
+                    enemy.draw(this.ctx);
+                });
+                
+                // Remove dead enemies and those that reached base
+                this.enemies = this.enemies.filter(enemy => !enemy.dead && !enemy.reachedBase);
+                
+                // Check collisions
+                this.checkCollisions();
+                
+                // Continue game loop
+                requestAnimationFrame(() => this.gameLoop());
+            }
+        }
+        
+        // Global variables
+        let game;
+        let canvas;
+        
+        // Start game when page loads
+        window.addEventListener('load', () => {
+            canvas = document.getElementById('gameCanvas');
+            game = new Game();
+        });
+    </script>
+</body>
+</html>
