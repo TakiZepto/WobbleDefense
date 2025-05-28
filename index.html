@@ -157,17 +157,33 @@
                 this.lastAttack = 0;
                 this.target = null;
                 this.isDefender = false; // Track if ball is in defense position
+                this.mass = this.getMass(); // Add mass for better physics
             }
             
             getRadius() {
                 const baseDiameter = 20;
-                const diameter = baseDiameter * Math.pow(2, this.size - 1);
+                // Changed from Math.pow(2, this.size - 1) to Math.pow(1.5, this.size - 1)
+                const diameter = baseDiameter * Math.pow(1.5, this.size - 1);
                 return diameter / 2;
             }
             
+            getMass() {
+                // Mass scales with the square of the radius for more realistic physics
+                // Defenders are heavier and get progressively heavier per level
+                const baseMass = Math.pow(this.radius / 10, 2);
+                if (this.isDefender) {
+                    // Start at 60% heavier, increase by 15% per level
+                    const defenderBonus = 1.6 * Math.pow(1.15, this.size - 1);
+                    return baseMass * defenderBonus;
+                }
+                return baseMass;
+            }
+            
             getAttackRate() {
-                const rates = [2500, 1000, 400, 100, 40, 10, 4]; // milliseconds
-                return rates[this.size - 1] || 4;
+                // Convert attacks per second to milliseconds between attacks
+                // Lv1: 0.4/sec, Lv2: 1/sec, Lv3: 3/sec, Lv4: 7/sec, Lv5: 15/sec, Lv6: 35/sec, Lv7: 80/sec
+                const rates = [2500, 1000, 333, 143, 67, 29, 13]; // milliseconds
+                return rates[this.size - 1] || 13;
             }
             
             getDamage() {
@@ -186,7 +202,36 @@
                 if (this.y + this.radius > baseLineY) {
                     this.y = baseLineY - this.radius;
                     if (this.vy > 0) {
-                        this.vy *= -0.6; // Bounce
+                        // Reduced bounce for more natural feel
+                        this.vy *= -0.4;
+                        // Add slight horizontal wobble when bouncing
+                        this.vx += (Math.random() - 0.5) * 0.2;
+                    }
+                }
+            }
+            
+            // NEW: Constraint to keep ball within side walls
+            constrainToSideWalls() {
+                const leftWallX = 0;   // Left wall position
+                const rightWallX = canvas.width;  // Right wall position
+                
+                // Left wall constraint
+                if (this.x - this.radius < leftWallX) {
+                    this.x = leftWallX + this.radius;
+                    if (this.vx < 0) {
+                        this.vx *= -0.4; // Reduced bounce similar to base
+                        // Add slight vertical wobble when bouncing off walls
+                        this.vy += (Math.random() - 0.5) * 0.2;
+                    }
+                }
+                
+                // Right wall constraint
+                if (this.x + this.radius > rightWallX) {
+                    this.x = rightWallX - this.radius;
+                    if (this.vx > 0) {
+                        this.vx *= -0.4; // Reduced bounce similar to base
+                        // Add slight vertical wobble when bouncing off walls
+                        this.vy += (Math.random() - 0.5) * 0.2;
                     }
                 }
             }
@@ -197,49 +242,63 @@
                 const baseLineY = 300; // Pink line - solid floor
                 
                 if (!this.isDefender) {
-                    // Apply gravity
-                    this.vy += 0.3;
+                    // Reduced gravity for more natural feel
+                    this.vy += 0.2;
                     
-                    // Add slight air resistance
-                    this.vx *= 0.99;
-                    this.vy *= 0.995;
+                    // Improved air resistance - slightly different for x and y
+                    this.vx *= 0.998;
+                    this.vy *= 0.999;
                     
                     // Update position
                     this.x += this.vx;
                     this.y += this.vy;
                     
-                    // Bounce off walls
-                    if (this.x - this.radius < 0) {
-                        this.x = this.radius;
-                        this.vx *= -0.85;
-                    }
-                    if (this.x + this.radius > canvas.width) {
-                        this.x = canvas.width - this.radius;
-                        this.vx *= -0.85;
-                    }
+                    // Apply side wall constraints (NEW)
+                    this.constrainToSideWalls();
                     
                     // Solid floor collision - balls CANNOT pass through
                     this.constrainToBase();
                     
-                    // More generous settling conditions
-                    if (this.y + this.radius >= baseLineY - 5) {
-                        if (Math.abs(this.vy) < 3 && Math.abs(this.vx) < 3) {
+                    // More lenient settling conditions to allow more dynamic movement
+                    if (this.y + this.radius >= baseLineY - 2) {
+                        // Higher velocity thresholds - balls need to be more settled to become defenders
+                        if (Math.abs(this.vy) < 0.8 && Math.abs(this.vx) < 1.0) {
                             this.vy = 0;
-                            this.vx *= 0.8; // More gradual horizontal reduction
-                            if (Math.abs(this.vx) < 0.2) {
+                            this.vx *= 0.95; // More gradual horizontal settling
+                            if (Math.abs(this.vx) < 0.05) { // Lower threshold for final stop
                                 this.vx = 0;
                                 this.isDefender = true;
                             }
                         }
                     }
                 } else {
-                    // Defender balls stay put but ensure they're still above base
+                    // Defender balls can still move but with more friction and settling behavior 
+                    this.vy += 0.1; // Reduced gravity for defenders
+                    
+                    // Higher friction for defenders - they settle more but can still be pushed
+                    this.vx *= 0.85;  // Higher horizontal friction
+                    this.vy *= 0.9;   // Higher vertical friction
+                    
+                    // Update position - defenders can still move!
+                    this.x += this.vx;
+                    this.y += this.vy;
+                    
+                    // Apply constraints
                     this.constrainToBase();
-                    this.vx = 0;
-                    this.vy = 0;
+                    this.constrainToSideWalls();
+                    
+                    // Stronger settling tendency - try to reduce small movements
+                    if (this.y + this.radius >= 295) { // Close to base
+                        if (Math.abs(this.vy) < 0.5 && Math.abs(this.vx) < 0.5) {
+                            this.vx *= 0.7; // Gradual settling
+                            this.vy *= 0.7;
+                        }
+                    }
                 }
                 
+                // Update radius and mass when size changes
                 this.radius = this.getRadius();
+                this.mass = this.getMass();
                 
                 // Attack logic for defender balls
                 if (this.isDefender && Date.now() - this.lastAttack > this.getAttackRate()) {
@@ -317,9 +376,7 @@
                 const dy = this.y - other.y;
                 const distance = Math.sqrt(dx * dx + dy * dy);
                 
-                // Increased tolerance to prevent micro-collisions
-                const tolerance = 1.2;
-                return distance < (this.radius + other.radius - tolerance);
+                return distance < (this.radius + other.radius - 0.5);
             }
             
             canMerge(other) {
@@ -406,7 +463,7 @@
                 this.baseHP = 200;
                 this.maxBaseHP = 200;
                 this.wave = 1;
-                this.maxWaves = 5;
+                this.maxWaves = 6;
                 this.enemiesSpawnedThisWave = 0;
                 this.enemiesNeededThisWave = this.getEnemiesForWave(this.wave);
                 this.dropHeight = 50;
@@ -423,12 +480,18 @@
             
             getEnemiesForWave(wave) {
                 // Wave N = 5 + 5*N (Wave 1 = 10, Wave 2 = 15, Wave 3 = 20, etc.)
-                return 5 + 5 * wave;
+                // Wave 6 gets 3x more enemies for final challenge
+                const baseEnemies = 5 + 5 * wave;
+                if (wave === 6) {
+                    return baseEnemies * 3; // 105 enemies for wave 6!
+                }
+                return baseEnemies;
             }
             
             getSpawnRateForWave(wave) {
-                const spawnRates = [2000, 1500, 1100, 700, 300]; // Wave 1-5 in milliseconds
-                return spawnRates[wave - 1] || 300;
+                // Wave 6 has twice the spawn rate (half the time) of wave 5
+                const spawnRates = [2000, 1500, 1100, 700, 300, 150]; // Wave 1-6 in milliseconds
+                return spawnRates[wave - 1] || 150;
             }
             
             startNextWave() {
@@ -482,8 +545,14 @@
                 const y = event.clientY - rect.top;
                 if (y > 300) return;
                 
-                const ball = new Ball(x, this.dropHeight, this.nextColor, 1);
-                ball.vx = (Math.random() - 0.5) * 0.1; // Very tiny random variation (-0.05 to +0.05)
+                // NEW: Constrain drop position to be within side walls
+                const leftWallX = 0;
+                const rightWallX = this.canvas.width;
+                const constrainedX = Math.max(leftWallX + 15, Math.min(rightWallX - 15, x));
+                
+                const ball = new Ball(constrainedX, this.dropHeight, this.nextColor, 1);
+                // Reduced initial randomization for smoother drops
+                ball.vx = (Math.random() - 0.5) * 0.05;
                 this.balls.push(ball);
                 
                 this.nextColor = this.getRandomColor();
@@ -510,7 +579,11 @@
                 
                 // Spawn enemy based on spawn rate
                 if (Date.now() - this.lastSpawn > this.spawnRate) {
-                    const x = Math.random() * (this.canvas.width - 40) + 20;
+                    // NEW: Spawn enemies within the side wall boundaries
+                    const leftWallX = 0;
+                    const rightWallX = this.canvas.width;
+                    const x = Math.random() * (rightWallX - leftWallX - 40) + leftWallX + 20;
+                    
                     this.enemies.push(new Enemy(x, this.canvas.height - 20));
                     this.enemiesSpawnedThisWave++;
                     this.lastSpawn = Date.now();
@@ -550,86 +623,61 @@
                 
                 // Calculate overlap
                 const overlap = (ball1.radius + ball2.radius) - distance;
+                if (overlap <= 0) return;
                 
-                // If overlap is very small, ignore it completely
-                if (overlap < 1) return;
+                // More natural collision resolution using mass
+                const totalMass = ball1.mass + ball2.mass;
+                const ball1Factor = ball2.mass / totalMass;
+                const ball2Factor = ball1.mass / totalMass;
                 
-                // Calculate speeds
-                const ball1Speed = Math.sqrt(ball1.vx * ball1.vx + ball1.vy * ball1.vy);
-                const ball2Speed = Math.sqrt(ball2.vx * ball2.vx + ball2.vy * ball2.vy);
+                // Separate balls based on mass
+                const separationX = nx * overlap * 0.5;
+                const separationY = ny * overlap * 0.5;
                 
-                // If both balls are moving very slowly and overlap is small, just dampen
-                if (overlap < 4 && ball1Speed < 1 && ball2Speed < 1) {
-                    ball1.vx *= 0.9;
-                    ball1.vy *= 0.9;
-                    ball2.vx *= 0.9;
-                    ball2.vy *= 0.9;
-                    return;
-                }
+                ball1.x -= separationX * ball1Factor;
+                ball1.y -= separationY * ball1Factor;
+                ball2.x += separationX * ball2Factor;
+                ball2.y += separationY * ball2Factor;
                 
-                // Determine which ball is lower (closer to base)
-                const ball1AtBase = (ball1.y + ball1.radius >= baseLineY - 8);
-                const ball2AtBase = (ball2.y + ball2.radius >= baseLineY - 8);
-                
-                if (ball1AtBase && ball2AtBase) {
-                    // Both balls are at the base - very gentle horizontal separation
-                    const separationX = nx * overlap * 0.15; // Much smaller force
-                    ball1.x -= separationX;
-                    ball2.x += separationX;
-                    
-                    // Ensure both stay above base
-                    ball1.constrainToBase();
-                    ball2.constrainToBase();
-                    
-                    // Heavy damping for settled balls
-                    ball1.vx *= 0.5;
-                    ball2.vx *= 0.5;
-                    ball1.vy = Math.min(ball1.vy * 0.3, 0);
-                    ball2.vy = Math.min(ball2.vy * 0.3, 0);
-                    
-                } else if (ball1AtBase) {
-                    // Ball1 is at base, very gentle push for ball2
-                    ball2.x += nx * overlap * 0.4;
-                    ball2.y += ny * overlap * 0.4;
-                    if (ball2.vy > -0.3) ball2.vy = -0.3; // Very gentle upward push
-                    ball1.constrainToBase();
-                    
-                } else if (ball2AtBase) {
-                    // Ball2 is at base, very gentle push for ball1
-                    ball1.x -= nx * overlap * 0.4;
-                    ball1.y -= ny * overlap * 0.4;
-                    if (ball1.vy > -0.3) ball1.vy = -0.3; // Very gentle upward push
-                    ball2.constrainToBase();
-                    
-                } else {
-                    // Neither ball is at base - gentle collision
-                    const separationX = nx * overlap * 0.25;
-                    const separationY = ny * overlap * 0.25;
-                    
-                    ball1.x -= separationX;
-                    ball1.y -= separationY;
-                    ball2.x += separationX;
-                    ball2.y += separationY;
-                    
-                    // Apply very gentle collision physics
-                    const dvx = ball2.vx - ball1.vx;
-                    const dvy = ball2.vy - ball1.vy;
-                    const dvn = dvx * nx + dvy * ny;
-                    
-                    if (dvn > 0) return;
-                    
-                    const restitution = 0.3; // Much less bouncy
-                    const impulse = (1 + restitution) * dvn / 2;
-                    
-                    ball1.vx += impulse * nx * 0.6;
-                    ball1.vy += impulse * ny * 0.6;
-                    ball2.vx -= impulse * nx * 0.6;
-                    ball2.vy -= impulse * ny * 0.6;
-                }
-                
-                // Final constraint check for both balls
+                // Ensure balls stay within all constraints
                 ball1.constrainToBase();
+                ball1.constrainToSideWalls();
                 ball2.constrainToBase();
+                ball2.constrainToSideWalls();
+                
+                // Calculate relative velocity
+                const dvx = ball2.vx - ball1.vx;
+                const dvy = ball2.vy - ball1.vy;
+                const dvn = dvx * nx + dvy * ny;
+                
+                // Don't resolve if velocities are separating
+                if (dvn > 0) return;
+                
+                // More natural collision response - increased energy transfer
+                const restitution = 0.6; // Increased bounciness for better pushing
+                const impulse = (1 + restitution) * dvn / totalMass;
+                
+                // Apply impulse based on mass - increased transfer for better physics
+                ball1.vx += impulse * ball2.mass * nx * 1.0; // Increased from 0.8
+                ball1.vy += impulse * ball2.mass * ny * 1.0; // Increased from 0.8
+                ball2.vx -= impulse * ball1.mass * nx * 1.0; // Increased from 0.8
+                ball2.vy -= impulse * ball1.mass * ny * 1.0; // Increased from 0.8
+                
+                // Wake up defenders if they get hit hard enough
+                const wakeUpThreshold = 1.5;
+                if (ball1.isDefender && (Math.abs(ball1.vx) > wakeUpThreshold || Math.abs(ball1.vy) > wakeUpThreshold)) {
+                    ball1.isDefender = false;
+                }
+                if (ball2.isDefender && (Math.abs(ball2.vx) > wakeUpThreshold || Math.abs(ball2.vy) > wakeUpThreshold)) {
+                    ball2.isDefender = false;
+                }
+                
+                // Add slight randomness for more natural feel
+                const randomFactor = 0.02;
+                ball1.vx += (Math.random() - 0.5) * randomFactor;
+                ball1.vy += (Math.random() - 0.5) * randomFactor;
+                ball2.vx += (Math.random() - 0.5) * randomFactor;
+                ball2.vy += (Math.random() - 0.5) * randomFactor;
             }
             
             mergeBalls(ball1, ball2) {
@@ -638,7 +686,8 @@
                 const newSize = ball1.size + 1;
                 const newBall = new Ball(newX, newY, ball1.color, newSize);
                 
-                newBall.vy = -3;
+                // Reduced merge bounce for smoother gameplay
+                newBall.vy = -2;
                 newBall.vx = (ball1.vx + ball2.vx) / 2;
                 
                 this.score += newSize * 10;
@@ -676,7 +725,7 @@
                     this.ctx.textAlign = 'center';
                     this.ctx.fillText('VICTORY!', this.canvas.width/2, this.canvas.height/2);
                     this.ctx.font = 'bold 24px Arial';
-                    this.ctx.fillText(`All 5 waves defeated!`, this.canvas.width/2, this.canvas.height/2 + 40);
+                    this.ctx.fillText(`All 6 waves defeated!`, this.canvas.width/2, this.canvas.height/2 + 40);
                     this.ctx.fillText(`Final Score: ${this.score}`, this.canvas.width/2, this.canvas.height/2 + 80);
                     return;
                 }
@@ -695,6 +744,25 @@
                 this.ctx.beginPath();
                 this.ctx.moveTo(0, 300);
                 this.ctx.lineTo(this.canvas.width, 300);
+                this.ctx.stroke();
+                
+                // NEW: Draw side walls (similar to base line)
+                const leftWallX = 0;
+                const rightWallX = this.canvas.width;
+                
+                this.ctx.strokeStyle = '#E91E63';
+                this.ctx.lineWidth = 3;
+                
+                // Left wall line
+                this.ctx.beginPath();
+                this.ctx.moveTo(leftWallX, 0);
+                this.ctx.lineTo(leftWallX, 300);
+                this.ctx.stroke();
+                
+                // Right wall line
+                this.ctx.beginPath();
+                this.ctx.moveTo(rightWallX, 0);
+                this.ctx.lineTo(rightWallX, 300);
                 this.ctx.stroke();
                 
                 // Draw base HP bar
