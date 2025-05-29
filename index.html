@@ -577,6 +577,20 @@
                 this.gameLoop();
             }
             
+            // NEW: Get background color based on current wave
+            getWaveBackgroundColor(wave) {
+                const waveBackgrounds = {
+                    1: '#87CEEB', // Sky blue - peaceful start
+                    2: '#FFE4B5', // Moccasin - warm afternoon
+                    3: '#DDA0DD', // Plum - mystical evening
+                    4: '#2F4F4F', // Dark slate gray - stormy night
+                    5: '#8B0000', // Dark red - danger approaching
+                    6: '#1C1C1C'  // Almost black - final darkness
+                };
+                
+                return waveBackgrounds[wave] || waveBackgrounds[6];
+            }
+            
             getEnemiesForWave(wave) {
                 // Wave N = 5 + 5*N (Wave 1 = 10, Wave 2 = 15, Wave 3 = 20, etc.)
                 // Wave 6 gets 3x more enemies for final challenge
@@ -805,6 +819,10 @@
             gameLoop() {
                 // Game over check
                 if (this.baseHP <= 0) {
+                    // Fill with wave background first
+                    this.ctx.fillStyle = this.getWaveBackgroundColor(this.wave);
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                    
                     this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
                     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
                     this.ctx.fillStyle = 'white';
@@ -818,6 +836,10 @@
                 
                 // Victory check
                 if (this.gameWon) {
+                    // Fill with wave background first
+                    this.ctx.fillStyle = this.getWaveBackgroundColor(this.wave);
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                    
                     this.ctx.fillStyle = 'rgba(0, 100, 0, 0.8)';
                     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
                     this.ctx.fillStyle = 'white';
@@ -830,8 +852,9 @@
                     return;
                 }
                 
-                // Clear canvas
-                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                // NEW: Fill canvas with wave-specific background color
+                this.ctx.fillStyle = this.getWaveBackgroundColor(this.wave);
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
                 
                 // Draw base (green area) first
                 const baseHeight = 20;
