@@ -577,15 +577,15 @@
                 this.gameLoop();
             }
             
-            // NEW: Get background color based on current wave
+            // NEW: Get background color based on current wave - optimized for enemy contrast
             getWaveBackgroundColor(wave) {
                 const waveBackgrounds = {
-                    1: '#87CEEB', // Sky blue - peaceful start
-                    2: '#FFE4B5', // Moccasin - warm afternoon
-                    3: '#DDA0DD', // Plum - mystical evening
-                    4: '#2F4F4F', // Dark slate gray - stormy night
-                    5: '#8B0000', // Dark red - danger approaching
-                    6: '#1C1C1C'  // Almost black - final darkness
+                    1: '#87CEEB', // Sky blue - peaceful start, still good contrast with light brown
+                    2: '#E6F3FF', // Very light blue - contrasts with brown enemies
+                    3: '#1A1A2E', // Dark navy - contrasts with light gray enemies
+                    4: '#FFF8DC', // Cornsilk - contrasts with dark blue enemies
+                    5: '#98FB98', // Pale green - contrasts with purple enemies
+                    6: '#0F2027'  // Very dark blue-gray - contrasts with red enemies
                 };
                 
                 return waveBackgrounds[wave] || waveBackgrounds[6];
