@@ -79,7 +79,7 @@
     <div id="gameInfo">
         <div id="preview">Next ball: <div id="nextBall"></div></div>
         <div class="stat" id="score">Score: 0</div>
-        <div class="stat" id="baseHP">Base HP: 200/200</div>
+        <div class="stat" id="baseHP">Base HP: 100/100</div>
         <div class="stat" id="wave">Wave: 1</div>
     </div>
     
@@ -88,6 +88,76 @@
     </div>
 
     <script>
+        class Explosion {
+            constructor(x, y, type = 'base') {
+                this.x = x;
+                this.y = y;
+                this.particles = [];
+                this.type = type;
+                this.duration = type === 'base' ? 500 : 350; // Shorter lifetimes
+                this.startTime = Date.now();
+                this.dead = false;
+                
+                // Create explosion particles based on type
+                const particleCount = type === 'base' ? 12 : 8;
+                const maxSpeed = type === 'base' ? 3 : 2;
+                const baseSize = type === 'base' ? 4 : 3; // Bigger particles
+                
+                for (let i = 0; i < particleCount; i++) {
+                    const angle = (Math.PI * 2 * i) / particleCount + (Math.random() - 0.5) * 0.3;
+                    const speed = 1 + Math.random() * maxSpeed;
+                    this.particles.push({
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        size: baseSize + Math.random() * 3, // Bigger overall
+                        opacity: 1,
+                        color: type === 'base' ? 
+                            (Math.random() > 0.5 ? '#FF6B35' : '#F7931E') : 
+                            (Math.random() > 0.5 ? '#4CAF50' : '#8BC34A') // Green for enemy destruction
+                    });
+                }
+            }
+            
+            update() {
+                const elapsed = Date.now() - this.startTime;
+                const progress = elapsed / this.duration;
+                
+                if (progress >= 1) {
+                    this.dead = true;
+                    return;
+                }
+                
+                // Update particles
+                this.particles.forEach(particle => {
+                    particle.x += particle.vx;
+                    particle.y += particle.vy;
+                    particle.vx *= 0.98; // Slow down over time
+                    particle.vy *= 0.98;
+                    particle.opacity = Math.max(0, 1 - progress * 1.5);
+                    particle.size *= 0.99; // Shrink over time
+                });
+            }
+            
+            draw(ctx) {
+                if (this.dead) return;
+                
+                // Only draw particles (no central circle)
+                this.particles.forEach(particle => {
+                    if (particle.opacity <= 0) return;
+                    
+                    ctx.save();
+                    ctx.globalAlpha = particle.opacity;
+                    ctx.beginPath();
+                    ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+                    ctx.fillStyle = particle.color;
+                    ctx.fill();
+                    ctx.restore();
+                });
+            }
+        }
+
         class Projectile {
             constructor(x, y, targetX, targetY, damage, color) {
                 this.x = x;
@@ -389,15 +459,35 @@
         }
         
         class Enemy {
-            constructor(x, y) {
+            constructor(x, y, wave) {
                 this.x = x;
                 this.y = y;
-                this.maxHP = 50;
-                this.hp = 50;
+                this.wave = wave;
+                
+                // Set HP and color based on wave
+                const waveData = this.getWaveData(wave);
+                this.maxHP = waveData.hp;
+                this.hp = waveData.hp;
+                this.color = waveData.color;
+                this.strokeColor = waveData.strokeColor;
+                
                 this.attack = 1;
                 this.speed = 0.5;
                 this.dead = false;
                 this.reachedBase = false;
+            }
+            
+            getWaveData(wave) {
+                const waveSettings = {
+                    1: { hp: 5, color: '#D2B48C', strokeColor: '#A0866B' },   // Light brown
+                    2: { hp: 10, color: '#8B4513', strokeColor: '#654321' },  // Brown
+                    3: { hp: 15, color: '#E6E6E6', strokeColor: '#CCCCCC' },  // Light gray
+                    4: { hp: 25, color: '#191970', strokeColor: '#0F0F40' },  // Dark blue
+                    5: { hp: 35, color: '#800080', strokeColor: '#600060' },  // Purple
+                    6: { hp: 50, color: '#DC143C', strokeColor: '#B71C1C' }   // Red
+                };
+                
+                return waveSettings[wave] || waveSettings[6]; // Default to wave 6 if invalid
             }
             
             update() {
@@ -411,6 +501,10 @@
                     this.reachedBase = true;
                     game.baseHP -= this.attack;
                     game.updateUI();
+                    
+                    // Create explosion when enemy hits base
+                    const explosion = new Explosion(this.x, 310, 'base'); // Position at base line
+                    game.explosions.push(explosion);
                 }
             }
             
@@ -420,21 +514,25 @@
                     this.dead = true;
                     game.score += 10;
                     game.updateUI();
+                    
+                    // Create explosion when enemy is destroyed
+                    const explosion = new Explosion(this.x, this.y, 'enemy');
+                    game.explosions.push(explosion);
                 }
             }
             
             draw(ctx) {
                 if (this.dead) return;
                 
-                // Draw enemy triangle
+                // Draw enemy triangle with wave-based color
                 ctx.beginPath();
                 ctx.moveTo(this.x, this.y - 10);
                 ctx.lineTo(this.x - 8, this.y + 6);
                 ctx.lineTo(this.x + 8, this.y + 6);
                 ctx.closePath();
-                ctx.fillStyle = '#D32F2F';
+                ctx.fillStyle = this.color;
                 ctx.fill();
-                ctx.strokeStyle = '#B71C1C';
+                ctx.strokeStyle = this.strokeColor;
                 ctx.lineWidth = 2;
                 ctx.stroke();
                 
@@ -457,11 +555,12 @@
                 this.balls = [];
                 this.enemies = [];
                 this.projectiles = [];
+                this.explosions = []; // NEW: Add explosions array
                 this.colors = ['#4A90E2', '#E24A4A', '#F5A623'];
                 this.nextColor = this.getRandomColor();
                 this.score = 0;
-                this.baseHP = 200;
-                this.maxBaseHP = 200;
+                this.baseHP = 100;
+                this.maxBaseHP = 100;
                 this.wave = 1;
                 this.maxWaves = 6;
                 this.enemiesSpawnedThisWave = 0;
@@ -584,7 +683,8 @@
                     const rightWallX = this.canvas.width;
                     const x = Math.random() * (rightWallX - leftWallX - 40) + leftWallX + 20;
                     
-                    this.enemies.push(new Enemy(x, this.canvas.height - 20));
+                    // Pass current wave to enemy constructor
+                    this.enemies.push(new Enemy(x, this.canvas.height - 20, this.wave));
                     this.enemiesSpawnedThisWave++;
                     this.lastSpawn = Date.now();
                     this.updateUI();
@@ -773,18 +873,6 @@
                 this.ctx.fillStyle = '#4CAF50';
                 this.ctx.fillRect(10, 310, (this.canvas.width - 20) * hpRatio, hpBarHeight);
                 
-                // Show wave complete message
-                if (this.waveComplete && !this.gameWon) {
-                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-                    this.ctx.fillStyle = 'white';
-                    this.ctx.font = 'bold 36px Arial';
-                    this.ctx.textAlign = 'center';
-                    this.ctx.fillText(`Wave ${this.wave} Complete!`, this.canvas.width/2, this.canvas.height/2);
-                    this.ctx.font = 'bold 20px Arial';
-                    this.ctx.fillText('Next wave starting soon...', this.canvas.width/2, this.canvas.height/2 + 50);
-                }
-                
                 // Spawn enemies
                 this.spawnEnemy();
                 
@@ -812,8 +900,29 @@
                 // Remove dead enemies and those that reached base
                 this.enemies = this.enemies.filter(enemy => !enemy.dead && !enemy.reachedBase);
                 
+                // NEW: Update and draw explosions
+                this.explosions.forEach(explosion => {
+                    explosion.update();
+                    explosion.draw(this.ctx);
+                });
+                
+                // Remove dead explosions
+                this.explosions = this.explosions.filter(explosion => !explosion.dead);
+                
                 // Check collisions
                 this.checkCollisions();
+                
+                // Show wave complete message - NOW DRAWN ON TOP OF EVERYTHING
+                if (this.waveComplete && !this.gameWon) {
+                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                    this.ctx.fillStyle = 'white';
+                    this.ctx.font = 'bold 36px Arial';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText(`Wave ${this.wave} Complete!`, this.canvas.width/2, this.canvas.height/2);
+                    this.ctx.font = 'bold 20px Arial';
+                    this.ctx.fillText('Next wave starting soon...', this.canvas.width/2, this.canvas.height/2 + 50);
+                }
                 
                 // Continue game loop
                 requestAnimationFrame(() => this.gameLoop());
